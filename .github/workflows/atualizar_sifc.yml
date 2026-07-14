@@ -3,7 +3,7 @@ name: Atualizar SIFC
 on:
 
   schedule:
-    - cron: '50 14 * * *'
+    - cron: '58 14 * * *'
 
   workflow_dispatch:
 
