@@ -29,10 +29,11 @@ jobs:
       - name: Instalar dependências de sistema
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev build-essential
-          # build-essential (gcc/make) é necessário para compilar o pacote
-          # read.dbc a partir do fonte, já que ele foi removido do CRAN e
-          # precisa ser instalado via remotes::install_github().
+          sudo apt-get install -y libcurl4-openssl-dev
+          # libcurl é necessário para o pacote RCurl, usado para acessar o
+          # FTP do DATASUS. O script não depende mais do read.dbc, então
+          # não é mais necessário compilar pacotes a partir do fonte
+          # (build-essential foi removido).
 
       - name: Cache de pacotes R
         uses: actions/cache@v4
