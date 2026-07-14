@@ -10,28 +10,23 @@
 # Fluxo:
 #   1) Lista os arquivos disponíveis nas pastas FINAIS e PRELIM do SINAN/SIFC
 #   2) Identifica o arquivo mais recente (maior ano)
-#   3) Baixa o .dbc e salva (sem conversão) na pasta "Bases", renomeado com
-#      a data de extração (ex.: sifc_14072026.dbc)
-#   4) Grava um log de extrações
+#   3) Baixa o .dbc e salva (sem leitura/conversão) na pasta "Bases",
+#      renomeado com a data de extração (ex.: sifc_14072026.dbc)
+#   4) Grava um log de extrações (com metadados do arquivo, sem abrir o .dbc)
 #   5) git add / commit / push (autenticado pelo próprio Actions)
 # =============================================================================
 
 ## ---- 0. Pacotes necessários ------------------------------------------------
-## OBS: o pacote "read.dbc" foi removido do CRAN em 14/12/2025 (arquivado),
-## então ele precisa ser instalado a partir do código-fonte no GitHub
-## (o pacote em si continua funcional, só não está mais nos repositórios
-## padrão). Usamos o "remotes" para isso.
+## OBS: este script não depende mais do pacote "read.dbc" — o arquivo é
+## baixado e mantido em formato .dbc original, sem nenhuma leitura/conversão
+## do conteúdo em R. Por isso não é mais necessário compilar pacotes a
+## partir do fonte nem instalar o "remotes".
 
-pacotes_cran <- c("remotes", "RCurl", "dplyr", "stringr")
+pacotes_cran <- c("RCurl", "dplyr", "stringr")
 novos <- pacotes_cran[!(pacotes_cran %in% installed.packages()[, "Package"])]
 if (length(novos) > 0) install.packages(novos, repos = "https://cloud.r-project.org")
 
-if (!("read.dbc" %in% installed.packages()[, "Package"])) {
-  remotes::install_github("danicat/read.dbc", upgrade = "never")
-}
-
 library(RCurl)
-library(read.dbc)
 library(dplyr)
 library(stringr)
 
@@ -118,13 +113,12 @@ download.file(
 message("Arquivo .dbc salvo em: ", destino_dbc)
 
 ## ---- 4. Log de extrações ----------------------------------------------------
-## Lê o .dbc apenas para contabilizar o número de registros no log
-## (o arquivo em si permanece salvo em formato .dbc, sem conversão).
+## Sem o pacote read.dbc, o conteúdo do arquivo não é lido em nenhum momento;
+## o log registra apenas metadados do próprio arquivo baixado.
 
-dados_sifc <- read.dbc::read.dbc(destino_dbc)
+tamanho_mb <- round(file.info(destino_dbc)$size / (1024^2), 2)
 
-message(sprintf("Total de registros: %s | Total de colunas: %s",
-                 format(nrow(dados_sifc), big.mark = "."), ncol(dados_sifc)))
+message(sprintf("Arquivo salvo com %.2f MB.", tamanho_mb))
 
 log_path <- file.path(pasta_destino, "log_extracoes.csv")
 novo_log <- data.frame(
@@ -133,7 +127,7 @@ novo_log <- data.frame(
   ano_referencia = arquivo_mais_recente$ano,
   tipo           = ifelse(arquivo_mais_recente$e_final, "final", "preliminar"),
   dbc_gerado     = nome_dbc,
-  n_registros    = nrow(dados_sifc)
+  tamanho_mb     = tamanho_mb
 )
 
 if (file.exists(log_path)) {
