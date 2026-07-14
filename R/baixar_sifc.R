@@ -1,152 +1,177 @@
-library(RSelenium)
-library(fs)
+# =============================================================================
+# Extração automática dos dados mais atualizados de SÍFILIS CONGÊNITA
+# do SINAN, publicados no FTP público do DATASUS (mesma fonte que alimenta
+# a página https://datasus.saude.gov.br/transferencia-de-arquivos/).
+#
+# Fluxo:
+#   1) Lista os arquivos disponíveis nas pastas FINAIS e PRELIM do SINAN/SIFC
+#   2) Identifica o arquivo mais recente (maior ano)
+#   3) Baixa o .dbc
+#   4) Converte .dbc -> data.frame -> .csv
+#   5) Grava um log de extrações
+#   6) git add / commit / push (autenticado pelo próprio Actions)
+# =============================================================================
 
-dir_create("dados")
+## ---- 0. Pacotes necessários ------------------------------------------------
 
-url <- "https://datasus.saude.gov.br/transferencia-de-arquivos/"
+pacotes <- c("RCurl", "read.dbc", "dplyr", "stringr")
+novos   <- pacotes[!(pacotes %in% installed.packages()[, "Package"])]
+if (length(novos) > 0) install.packages(novos, repos = "https://cloud.r-project.org")
 
+library(RCurl)
+library(read.dbc)
+library(dplyr)
+library(stringr)
 
+## ---- 1. Caminhos (relativos à raiz do repositório) -------------------------
+## Quando rodado via GitHub Actions, o working directory já é a raiz do repo.
 
-# Iniciando navegador
-rD <- rsDriver(
-  browser = "chrome",
-  chromever = NULL,
-  port = 4567L,
-  verbose = FALSE
+repo_root      <- normalizePath(".")
+pasta_relativa <- file.path("dados", "sifc")            # pasta de dados dentro do repo
+pasta_destino  <- file.path(repo_root, pasta_relativa)
+
+dir.create(pasta_destino, recursive = TRUE, showWarnings = FALSE)
+
+## ---- 2. Localizar os arquivos SIFC mais recentes no FTP do DATASUS --------
+## Nomenclatura dos arquivos: SIFCBR<AA>.dbc  (ex.: SIFCBR24.dbc = ano 2024)
+
+ftp_bases <- c(
+  "finais_v1" = "ftp://ftp.dados.saude.gov.br/dissemin/publicos/SINAN/DADOS/FINAIS/",
+  "prelim_v1" = "ftp://ftp.dados.saude.gov.br/dissemin/publicos/SINAN/DADOS/PRELIM/",
+  "finais_v2" = "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/DADOS/FINAIS/",
+  "prelim_v2" = "ftp://ftp.datasus.gov.br/dissemin/publicos/SINAN/DADOS/PRELIM/"
 )
 
-remDr <- rD$client
-
-remDr$navigate(url)
-
-Sys.sleep(5)
-
-
-
-
-# Função auxiliar
-seleciona <- function(xpath, texto){
-  select <- remDr$findElement("xpath", xpath)
-  
-  opts <- select$findChildElements("tag name","option")
-
-  nomes <- sapply(opts, function(x)x$getElementText()[[1]])
-
-  pos <- which(trimws(nomes)==texto)
-
-  if(length(pos)==0)
-    stop(paste("Não encontrou:", texto))
-
-  opts[[pos]]$clickElement()
+listar_arquivos_sifc <- function(url_pasta) {
+  tryCatch({
+    conteudo <- getURL(url_pasta, ftp.use.epsv = FALSE, dirlistonly = TRUE,
+                        connecttimeout = 30)
+    arquivos <- strsplit(conteudo, "\r?\n")[[1]]
+    arquivos <- arquivos[str_detect(arquivos, regex("^SIFCBR.*\\.dbc$", ignore_case = TRUE))]
+    if (length(arquivos) == 0) return(NULL)
+    data.frame(
+      arquivo = arquivos,
+      url     = paste0(url_pasta, arquivos),
+      pasta   = url_pasta,
+      stringsAsFactors = FALSE
+    )
+  }, error = function(e) {
+    message("Não foi possível acessar: ", url_pasta, " -> ", conditionMessage(e))
+    NULL
+  })
 }
 
+lista_arquivos <- bind_rows(lapply(ftp_bases, listar_arquivos_sifc))
 
+if (nrow(lista_arquivos) == 0) {
+  stop("Nenhum arquivo SIFC encontrado nas pastas do FTP do DATASUS.\n",
+       "Possíveis causas: o runner do GitHub Actions bloqueou a porta FTP (21), ",
+       "ou a estrutura de pastas do site mudou (confira manualmente em ",
+       "https://datasus.saude.gov.br/transferencia-de-arquivos/).")
+}
 
-# Fonte
-seleciona(
- "(//select)[1]",
- "SINAN - Sistema de Informação de Agravos de Notificação"
-)
+lista_arquivos <- lista_arquivos %>%
+  mutate(
+    ano2    = as.integer(str_extract(arquivo, "(?<=SIFCBR)\\d{2}(?=\\.dbc)")),
+    ano     = ifelse(ano2 < 50, 2000 + ano2, 1900 + ano2),
+    e_final = str_detect(pasta, "FINAIS")
+  ) %>%
+  distinct(arquivo, .keep_all = TRUE) %>%
+  arrange(desc(ano), desc(e_final))
 
-Sys.sleep(2)
+print(lista_arquivos[, c("arquivo", "ano", "e_final", "url")])
 
-# Modalidade: "Dados"
-seleciona(
- "(//select)[2]",
- "Dados"
-)
+arquivo_mais_recente <- lista_arquivos[1, ]
 
-Sys.sleep(2)
+message(sprintf(
+  "Arquivo mais recente identificado: %s (ano %d, %s)",
+  arquivo_mais_recente$arquivo,
+  arquivo_mais_recente$ano,
+  ifelse(arquivo_mais_recente$e_final, "dados finais", "dados preliminares")
+))
 
+## ---- 3. Download do arquivo .dbc -------------------------------------------
 
-                  
-# Tipo: "SIFC" 
-seleciona(
- "(//select)[3]",
- "SIFC - Sífilis Congênita"
-)
-
-Sys.sleep(2)
-
-
-                  
-# Arquivo mais recente
-ano <- remDr$findElement("xpath","(//select)[4]")
-
-opts <- ano$findChildElements("tag name","option")
-
-anos <- sapply(opts,function(x)x$getElementText()[[1]])
-
-anos <- anos[grepl("^[0-9]{4}$",anos)]
-
-ultimo <- max(as.numeric(anos))
-
-seleciona("(//select)[4]", as.character(ultimo))
-
-Sys.sleep(2)
-
-
-               
-# UF: "BR"
-seleciona(
- "(//select)[5]",
- "BR"
-)
-
-Sys.sleep(2)
-
-
-               
-# Enviar
-remDr$
-  findElement(
-    "xpath",
-    "//button[contains(.,'Enviar')]"
-  )$
-  clickElement()
-
-Sys.sleep(8)
-
-
-               
-# Download
-remDr$
-  findElement(
-    "link text",
-    "Download"
-  )$
-  clickElement()
-
-Sys.sleep(5)
-
-zip <- remDr$
-  findElement(
-    "partial link text",
-    "arquivo.zip"
-  )
-
-href <- zip$getElementAttribute("href")[[1]]
-
-destino <- file.path(
-  "dados",
-  paste0("SIFC_",ultimo,".zip")
-)
+destino_dbc <- file.path(pasta_destino, arquivo_mais_recente$arquivo)
 
 download.file(
-  href,
-  destino,
-  mode="wb"
+  url      = arquivo_mais_recente$url,
+  destfile = destino_dbc,
+  mode     = "wb",
+  quiet    = FALSE
 )
 
-unzip(
-  destino,
-  exdir=file.path(
-    "dados",
-    paste0("SIFC_",ultimo)
-  ),
-  overwrite=TRUE
+## ---- 4. Conversão .dbc -> data.frame -> .csv -------------------------------
+
+dados_sifc <- read.dbc::read.dbc(destino_dbc)
+
+nome_csv <- sprintf(
+  "SIFC_%d_%s_atualizado_em_%s.csv",
+  arquivo_mais_recente$ano,
+  ifelse(arquivo_mais_recente$e_final, "final", "preliminar"),
+  format(Sys.Date(), "%Y-%m-%d")
+)
+destino_csv <- file.path(pasta_destino, nome_csv)
+
+write.csv(dados_sifc, destino_csv, row.names = FALSE, fileEncoding = "UTF-8")
+
+message("Dados convertidos e salvos em: ", destino_csv)
+message(sprintf("Total de registros: %s | Total de colunas: %s",
+                 format(nrow(dados_sifc), big.mark = "."), ncol(dados_sifc)))
+
+## ---- 5. Log de extrações ----------------------------------------------------
+
+log_path <- file.path(pasta_destino, "log_extracoes.csv")
+novo_log <- data.frame(
+  data_extracao  = as.character(Sys.time()),
+  arquivo_origem = arquivo_mais_recente$arquivo,
+  ano_referencia = arquivo_mais_recente$ano,
+  tipo           = ifelse(arquivo_mais_recente$e_final, "final", "preliminar"),
+  csv_gerado     = nome_csv,
+  n_registros    = nrow(dados_sifc)
 )
 
-unlink(destino)
+if (file.exists(log_path)) {
+  log_existente <- read.csv(log_path, stringsAsFactors = FALSE)
+  log_final <- bind_rows(log_existente, novo_log)
+} else {
+  log_final <- novo_log
+}
+write.csv(log_final, log_path, row.names = FALSE)
 
-cat("Download finalizado.\n")
+## ---- 6. Commit e push (autenticação herdada do GitHub Actions) -------------
+## O actions/checkout já deixa o git configurado para autenticar o push
+## usando o GITHUB_TOKEN do workflow (requer `permissions: contents: write`
+## no .yml). Aqui só precisamos definir um autor para o commit.
+
+git_run <- function(args) {
+  res <- system2("git", args = args, stdout = TRUE, stderr = TRUE)
+  status <- attr(res, "status")
+  if (!is.null(status) && status != 0) {
+    warning("Comando git falhou: git ", paste(args, collapse = " "), "\n",
+            paste(res, collapse = "\n"))
+  }
+  res
+}
+
+git_run(c("config", "user.name",  shQuote("github-actions[bot]")))
+git_run(c("config", "user.email", shQuote("41898282+github-actions[bot]@users.noreply.github.com")))
+
+git_run(c("add", shQuote(pasta_relativa)))
+
+status_saida <- git_run(c("status", "--porcelain"))
+
+if (length(status_saida) > 0 && any(nzchar(status_saida))) {
+  commit_msg <- sprintf(
+    "Atualização automática SIFC %d (%s) - %s",
+    arquivo_mais_recente$ano,
+    ifelse(arquivo_mais_recente$e_final, "dados finais", "dados preliminares"),
+    format(Sys.time(), "%Y-%m-%d %H:%M")
+  )
+  git_run(c("commit", "-m", shQuote(commit_msg)))
+  git_run(c("push"))
+  message("Push realizado com sucesso para o GitHub.")
+} else {
+  message("Nenhuma mudança detectada em relação ao último commit — nada para enviar ao GitHub.")
+}
+
