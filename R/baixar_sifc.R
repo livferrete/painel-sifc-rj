@@ -10,10 +10,10 @@
 # Fluxo:
 #   1) Lista os arquivos disponíveis nas pastas FINAIS e PRELIM do SINAN/SIFC
 #   2) Identifica o arquivo mais recente (maior ano)
-#   3) Baixa o .dbc
-#   4) Converte .dbc -> data.frame -> .csv
-#   5) Grava um log de extrações
-#   6) git add / commit / push (autenticado pelo próprio Actions)
+#   3) Baixa o .dbc e salva (sem conversão) na pasta "Bases", renomeado com
+#      a data de extração (ex.: sifc_14072026.dbc)
+#   4) Grava um log de extrações
+#   5) git add / commit / push (autenticado pelo próprio Actions)
 # =============================================================================
 
 ## ---- 0. Pacotes necessários ------------------------------------------------
@@ -39,7 +39,7 @@ library(stringr)
 ## Quando rodado via GitHub Actions, o working directory já é a raiz do repo.
 
 repo_root      <- normalizePath(".")
-pasta_relativa <- file.path("dados", "sifc")            # pasta de dados dentro do repo
+pasta_relativa <- "Bases"                                # pasta de dados dentro do repo
 pasta_destino  <- file.path(repo_root, pasta_relativa)
 
 dir.create(pasta_destino, recursive = TRUE, showWarnings = FALSE)
@@ -102,9 +102,11 @@ message(sprintf(
   ifelse(arquivo_mais_recente$e_final, "dados finais", "dados preliminares")
 ))
 
-## ---- 3. Download do arquivo .dbc -------------------------------------------
+## ---- 3. Download do arquivo .dbc (renomeado com a data de extração) --------
+## Nome final: sifc_DDMMAAAA.dbc (ex.: baixado hoje -> sifc_14072026.dbc)
 
-destino_dbc <- file.path(pasta_destino, arquivo_mais_recente$arquivo)
+nome_dbc    <- sprintf("sifc_%s.dbc", format(Sys.Date(), "%d%m%Y"))
+destino_dbc <- file.path(pasta_destino, nome_dbc)
 
 download.file(
   url      = arquivo_mais_recente$url,
@@ -113,25 +115,16 @@ download.file(
   quiet    = FALSE
 )
 
-## ---- 4. Conversão .dbc -> data.frame -> .csv -------------------------------
+message("Arquivo .dbc salvo em: ", destino_dbc)
+
+## ---- 4. Log de extrações ----------------------------------------------------
+## Lê o .dbc apenas para contabilizar o número de registros no log
+## (o arquivo em si permanece salvo em formato .dbc, sem conversão).
 
 dados_sifc <- read.dbc::read.dbc(destino_dbc)
 
-nome_csv <- sprintf(
-  "SIFC_%d_%s_atualizado_em_%s.csv",
-  arquivo_mais_recente$ano,
-  ifelse(arquivo_mais_recente$e_final, "final", "preliminar"),
-  format(Sys.Date(), "%Y-%m-%d")
-)
-destino_csv <- file.path(pasta_destino, nome_csv)
-
-write.csv(dados_sifc, destino_csv, row.names = FALSE, fileEncoding = "UTF-8")
-
-message("Dados convertidos e salvos em: ", destino_csv)
 message(sprintf("Total de registros: %s | Total de colunas: %s",
                  format(nrow(dados_sifc), big.mark = "."), ncol(dados_sifc)))
-
-## ---- 5. Log de extrações ----------------------------------------------------
 
 log_path <- file.path(pasta_destino, "log_extracoes.csv")
 novo_log <- data.frame(
@@ -139,7 +132,7 @@ novo_log <- data.frame(
   arquivo_origem = arquivo_mais_recente$arquivo,
   ano_referencia = arquivo_mais_recente$ano,
   tipo           = ifelse(arquivo_mais_recente$e_final, "final", "preliminar"),
-  csv_gerado     = nome_csv,
+  dbc_gerado     = nome_dbc,
   n_registros    = nrow(dados_sifc)
 )
 
@@ -151,7 +144,7 @@ if (file.exists(log_path)) {
 }
 write.csv(log_final, log_path, row.names = FALSE)
 
-## ---- 6. Commit e push (autenticação herdada do GitHub Actions) -------------
+## ---- 5. Commit e push (autenticação herdada do GitHub Actions) -------------
 ## O actions/checkout já deixa o git configurado para autenticar o push
 ## usando o GITHUB_TOKEN do workflow (requer `permissions: contents: write`
 ## no .yml). Aqui só precisamos definir um autor para o commit.
