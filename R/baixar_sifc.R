@@ -1,7 +1,11 @@
 # =============================================================================
-# Extração automática dos dados mais atualizados de SÍFILIS CONGÊNITA
+# Extração automática dos dados mais atualizados de SÍFILIS CONGÊNITA (SIFC)
 # do SINAN, publicados no FTP público do DATASUS (mesma fonte que alimenta
 # a página https://datasus.saude.gov.br/transferencia-de-arquivos/).
+#
+# Este script foi escrito para rodar DENTRO de um job do GitHub Actions
+# (ver .github/workflows/atualizar_sifc.yml), já dentro do repositório
+# clonado automaticamente pelo `actions/checkout`.
 #
 # Fluxo:
 #   1) Lista os arquivos disponíveis nas pastas FINAIS e PRELIM do SINAN/SIFC
@@ -13,10 +17,18 @@
 # =============================================================================
 
 ## ---- 0. Pacotes necessários ------------------------------------------------
+## OBS: o pacote "read.dbc" foi removido do CRAN em 14/12/2025 (arquivado),
+## então ele precisa ser instalado a partir do código-fonte no GitHub
+## (o pacote em si continua funcional, só não está mais nos repositórios
+## padrão). Usamos o "remotes" para isso.
 
-pacotes <- c("RCurl", "read.dbc", "dplyr", "stringr")
-novos   <- pacotes[!(pacotes %in% installed.packages()[, "Package"])]
+pacotes_cran <- c("remotes", "RCurl", "dplyr", "stringr")
+novos <- pacotes_cran[!(pacotes_cran %in% installed.packages()[, "Package"])]
 if (length(novos) > 0) install.packages(novos, repos = "https://cloud.r-project.org")
+
+if (!("read.dbc" %in% installed.packages()[, "Package"])) {
+  remotes::install_github("danicat/read.dbc", upgrade = "never")
+}
 
 library(RCurl)
 library(read.dbc)
@@ -174,4 +186,3 @@ if (length(status_saida) > 0 && any(nzchar(status_saida))) {
 } else {
   message("Nenhuma mudança detectada em relação ao último commit — nada para enviar ao GitHub.")
 }
-
