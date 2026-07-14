@@ -1,49 +1,43 @@
-name: Atualizar SIFC
+name: Atualizar dados SIFC (SINAN/DATASUS)
 
 on:
-
   schedule:
-    - cron: '37 15 * * *'
+    # Toda segunda-feira às 06:00 UTC (~03:00 horário de Brasília)
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}   # permite rodar manualmente pela aba "Actions" do GitHub
 
-  workflow_dispatch:
+permissions:
+  contents: write   # necessário para o job poder dar commit/push no repositório
 
 jobs:
-
-  download:
-
+  atualizar-sifc:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+        # persist-credentials fica true por padrão, o que permite ao
+        # `git push` dentro do script R se autenticar com o GITHUB_TOKEN
+        # gerado automaticamente para este workflow.
 
-      - uses: actions/checkout@v4
+      - name: Configurar R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.4'
+          use-public-rspm: true
 
-      - uses: r-lib/actions/setup-r@v2
-
-      - name: Instalar pacotes
-
+      - name: Instalar dependências de sistema
         run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev
 
-          install.packages(c(
-            "RSelenium",
-            "wdman",
-            "fs"
-          ))
+      - name: Cache de pacotes R
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.R_LIBS_USER }}
+          key: r-pkgs-${{ runner.os }}-${{ hashFiles('R/baixar_sifc.R') }}
+          restore-keys: |
+            r-pkgs-${{ runner.os }}-
 
-        shell: Rscript {0}
-
-      - name: Executar script
-
+      - name: Rodar script de extração e atualização do SIFC
         run: Rscript R/baixar_sifc.R
-
-      - name: Commit
-
-        run: |
-
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-
-          git add dados/
-
-          git diff --cached --quiet || git commit -m "Atualização automática SIFC"
-
-          git push
