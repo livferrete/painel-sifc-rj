@@ -29,7 +29,10 @@ jobs:
       - name: Instalar dependências de sistema
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev
+          sudo apt-get install -y libcurl4-openssl-dev build-essential
+          # build-essential (gcc/make) é necessário para compilar o pacote
+          # read.dbc a partir do fonte, já que ele foi removido do CRAN e
+          # precisa ser instalado via remotes::install_github().
 
       - name: Cache de pacotes R
         uses: actions/cache@v4
